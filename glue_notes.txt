@@ -1,0 +1,42 @@
+GLUE Notes
+
+
+GLUE = General Language Understanding Evaluation
+- https://gluebenchmark.com/
+- paper: https://openreview.net/pdf?id=rJ4km2R5t7
+- code: https://github.com/nyu-mll/GLUE-baselines
+
+SuperGLUE
+- newer more difficult benchmark
+- https://super.gluebenchmark.com/tasks
+
+jiant - toolkit for multi-task training and fine-tuning
+- https://github.com/nyu-mll/jiant
+- could use jiant to do the fine-tuniung version of our task, and compare to performance using an adapter
+- supports GLUE and SuperGLUE
+
+GLUE training scripts
+- HuggingFace: https://github.com/Adapter-Hub/adapter-transformers/blob/master/examples/text-classification/run_glue.py
+- AdapterHub version: https://github.com/Adapter-Hub/adapter-transformers/blob/master/examples/text-classification/run_glue_alt.py
+- ref: https://docs.adapterhub.ml/training.html
+
+My testing
+- tested training an adapter for roberta-base on the CoLA task:
+
+07/14/2021 08:15:38 - INFO - __main__ -   ***** Eval results cola *****
+07/14/2021 08:15:38 - INFO - __main__ -     eval_loss = 0.4884134531021118
+07/14/2021 08:15:38 - INFO - __main__ -     eval_matthews_correlation = 0.5526896422396544
+07/14/2021 08:15:38 - INFO - __main__ -     eval_runtime = 1.6888
+07/14/2021 08:15:38 - INFO - __main__ -     eval_samples_per_second = 617.61
+07/14/2021 08:15:38 - INFO - __main__ -     eval_steps_per_second = 77.571
+07/14/2021 08:15:38 - INFO - __main__ -     epoch = 10.0
+
+Matthew's Correlation Coefficient (MCC)
+- the metric for CoLA is Matthew's Correlation Coefficient (MCC)
+- https://en.wikipedia.org/wiki/Matthews_correlation_coefficient
+- values range from -1 to 1 (-1 is totally wrong, 1 is perfect, 0 is the same as random guess)
+- RoBERTa base CoLA score from the paper was 63.6 after fine-tuning for 10 epochs
+
+Questions
+1. Does "development set" mean the same thing as "validation set?" For GLUE, I see train, dev, and test sets.
+2. How to compare with the RoBERTa paper? Is the number reported in the paper their MCC?
