@@ -69,7 +69,7 @@ from transformers.adapters.configuration import AdapterConfig
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
-from mlm_utils import ModelArguments, DataTrainingArguments
+from mlm_utils import DomainModelArguments, DomainDataTrainingArguments
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.8.0")
@@ -84,9 +84,9 @@ logger = logging.getLogger(__name__)
 
 def masked_language_modeling(
     *,
-    model_args: ModelArguments,
+    model_args: DomainModelArguments,
     adapter_args: MultiLingAdapterArguments,
-    data_args: DataTrainingArguments,
+    data_args: DomainDataTrainingArguments,
     training_args: TrainingArguments,
 ):
     # See all possible arguments in transformers.TrainingArguments
@@ -496,11 +496,11 @@ def masked_language_modeling(
 if __name__ == "__main__":
     dataset = "cola"
 
-    model = ModelArguments(
+    model = DomainModelArguments(
         model_name_or_path="roberta-base",
     )
 
-    data = DataTrainingArguments(
+    data = DomainDataTrainingArguments(
         dataset_name="glue",
         dataset_config_name=dataset,
     )
