@@ -11,6 +11,6 @@ python run_mlm.py \
     --learning_rate 1e-4 \
     --num_train_epochs 10.0 \
     --output_dir ./adapter/mlm/$DATASET_NAME \
-    --overwrite_output_dir
+    --overwrite_output_dir \
     --train_adapter \
     --adapter_config "pfeiffer+inv"
