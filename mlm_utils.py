@@ -17,6 +17,7 @@
 # into a Jupyter Notebook training process. These classes are identical to the original script
 # except for being prefaced with "Domain" to avoid collisions in the namespace.
 # These classes are used when adapting a pre-trained model to a certain language domain.
+# More info on training adapters: https://docs.adapterhub.ml/training.html
 
 # THIS A DERIVATIVE WORK AS DEFINED IN SECTION 4 OF THE APACHE 2.0 LICENSE, ORIGINAL LICENSE FOLLOWS
 # Original Work:

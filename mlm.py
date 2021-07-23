@@ -13,10 +13,10 @@
 # limitations under the License.
 
 # Note: This code is adapted from the the AdapterHub Masked Language Modeling (MLM) training script.
-# Most functionality is retained, but I've moved dataclass definitions to a separate file
-# and refactored the main() method into several smaller methods to enable easier troubleshooting.
+# Most functionality is retained, but I've moved dataclass definitions to a separate file.
 # The reason for these changes is that for our project, we're training several different adapters
 # and we'd like to drive the training process from a Jupyter Notebook, rather than from the command line.
+# More info on training adapters: https://docs.adapterhub.ml/training.html
 
 # THIS A DERIVATIVE WORK AS DEFINED IN SECTION 4 OF THE APACHE 2.0 LICENSE, ORIGINAL LICENSE FOLLOWS
 # Original Work:
@@ -50,8 +50,8 @@ import math
 import os
 import sys
 
-
 from datasets import load_dataset
+from typing import Tuple, Dict
 
 import transformers
 from transformers import (
@@ -88,7 +88,8 @@ def masked_language_modeling(
     adapter_args: MultiLingAdapterArguments,
     data_args: DomainDataTrainingArguments,
     training_args: TrainingArguments,
-):
+) -> Tuple[Dict, Dict]:
+
     # See all possible arguments in transformers.TrainingArguments
 
     # Setup logging
