@@ -8,7 +8,7 @@ python run_glue_alt.py \
   --do_eval \
   --max_seq_length 128 \
   --per_device_train_batch_size 32 \
-  --learning_rate 1e-5 \
+  --learning_rate 1e-4 \
   --num_train_epochs 10.0 \
   --output_dir ./adapter/$TASK_NAME \
   --overwrite_output_dir \
