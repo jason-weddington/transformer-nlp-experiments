@@ -6,5 +6,8 @@ name = "pypi"
 [packages]
 scipy = "*"
 sklearn = "*"
+adapter-transformers = "*"
+jupyterlab = "*"
+datasets = "*"
 
 [dev-packages]
