@@ -41,7 +41,12 @@
 
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Dict
+import random
+import itertools
+from shutil import copyfile
+
+from transformers import TrainingArguments, MultiLingAdapterArguments
 
 task_to_keys = {
     "cola": ("sentence", None),
@@ -154,4 +159,65 @@ class TaskModelArguments:
         metadata={
             "help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."
         },
+    )
+
+
+def getParams(dictionary, limit):
+    paramsList = [
+        dict(zip(dictionary, v)) for v in itertools.product(*dictionary.values())
+    ]
+    random.shuffle(paramsList)
+
+    if limit is not False:
+        paramsList = paramsList[0 : min(limit, len(paramsList))]
+
+    return paramsList
+
+
+def initParse(dictionary: Dict, output_prefix=""):
+    model = TaskModelArguments(model_name_or_path=dictionary.get("model_name_or_path"))
+
+    data = TaskDataTrainingArguments(
+        task_name=dictionary.get("task_name"),
+        max_seq_length=dictionary.get("max_seq_length"),
+        pad_to_max_length=dictionary.get("pad_to_max_length"),
+    )
+
+    training = TrainingArguments(
+        adam_beta1=dictionary.get("adam_beta1"),
+        adam_beta2=dictionary.get("adam_beta2"),
+        adam_epsilon=dictionary.get("adam_epsilon"),
+        learning_rate=dictionary.get("learning_rate"),
+        fp16=dictionary.get("fp16"),
+        warmup_ratio=dictionary.get("warmup_ratio"),
+        warmup_steps=dictionary.get("warmup_steps"),
+        weight_decay=dictionary.get("weight_decay"),
+        do_train=dictionary.get("do_train"),
+        do_eval=dictionary.get("do_eval"),
+        per_device_train_batch_size=dictionary.get("per_device_train_batch_size"),
+        num_train_epochs=dictionary.get("num_train_epochs"),  # CHANGE ME
+        overwrite_output_dir=dictionary.get("overwrite_output_dir"),
+        output_dir=f"./adapter/task/{output_prefix}{dictionary.get('task_name')}",
+    )
+
+    adapter = MultiLingAdapterArguments(
+        train_adapter=True,
+        adapter_config="pfeiffer",
+    )
+
+    return model, data, training, adapter
+
+
+def copy_adapter_config(task_name: str, model_dir: str):
+    """Copy the adapter config into the downloaded local model location"""
+
+    config_location = f"./adapter/task/{task_name}/{task_name}"
+
+    copyfile(
+        src=f"{config_location}/adapter_config.json",
+        dst=f"{model_dir}/.git/adapter_config.json",
+    )
+    copyfile(
+        src=f"{config_location}/pytorch_adapter.bin",
+        dst=f"{model_dir}/.git/pytorch_adapter.bin",
     )

@@ -495,10 +495,10 @@ def masked_language_modeling(
 
 
 if __name__ == "__main__":
-    dataset = "cola"
+    dataset = "mrpc"
 
     model = DomainModelArguments(
-        model_name_or_path="roberta-base",
+        model_name_or_path="/home/jason/git/roberta-base",
     )
 
     data = DomainDataTrainingArguments(

@@ -47,9 +47,21 @@ https://huggingface.co/models?filter=masked-lm
 
 import logging
 import os
+from pathlib import Path
 import random
-import sys
-from task_utils import TaskModelArguments, TaskDataTrainingArguments, task_to_keys
+from time import time
+from typing import Optional
+
+import pandas as pd
+
+from task_utils import (
+    TaskModelArguments,
+    TaskDataTrainingArguments,
+    task_to_keys,
+    initParse,
+    getParams,
+    copy_adapter_config,
+)
 
 from datasets import load_dataset, load_metric
 from typing import Tuple, Dict
@@ -76,6 +88,7 @@ logger = logging.getLogger(__name__)
 
 def train_task_adapter(
     *,
+    model: Optional[AutoModelWithHeads] = None,
     model_args: TaskModelArguments,
     adapter_args: MultiLingAdapterArguments,
     data_args: TaskDataTrainingArguments,
@@ -184,17 +197,19 @@ def train_task_adapter(
         use_fast=model_args.use_fast_tokenizer,
     )
     # We use the AutoModelWithHeads class here for better adapter support.
-    model = AutoModelWithHeads.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
-        cache_dir=model_args.cache_dir,
-    )
-    model.add_classification_head(
-        data_args.task_name or "glue",
-        num_labels=num_labels,
-        id2label={i: v for i, v in enumerate(label_list)} if num_labels > 0 else None,
-    )
+    # load a model if no model was passed into the function
+    if not model:
+        model = AutoModelWithHeads.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=config,
+            cache_dir=model_args.cache_dir,
+        )
+        model.add_classification_head(
+            data_args.task_name or "glue",
+            num_labels=num_labels,
+            id2label={i: v for i, v in enumerate(label_list)} if num_labels > 0 else None,
+        )
 
     # Setup adapters
     if adapter_args.train_adapter:
@@ -438,7 +453,99 @@ def train_task_adapter(
                             item = label_list[item]
                             writer.write(f"{index}\t{item}\n")
 
-    return training_stats.metrics, eval_results
+    if training_stats:
+        return training_stats.metrics, eval_results
+
+    return None, eval_results
+
+
+def train(params: Dict, output_prefix="", pre_trained_model=None) -> pd.DataFrame:
+    model, data, training, adapter = initParse(params, output_prefix)
+
+    train_stats, eval_stats = train_task_adapter(
+        model=pre_trained_model,
+        model_args=model,
+        adapter_args=adapter,
+        training_args=training,
+        data_args=data,
+    )
+
+    row = []
+    row.extend(list(params.values()))
+    if train_stats:
+        row.extend(list(train_stats.values()))
+    row.extend(list(eval_stats.values()))
+
+    header = []
+    header.extend(list(params.keys()))
+    if train_stats:
+        header.extend(list(train_stats.keys()))
+    header.extend(list(eval_stats.keys()))
+
+    output_df = pd.DataFrame([row], columns=header)
+
+    del model
+    del data
+    del training
+    del adapter
+
+    return output_df
+
+
+def final_training(
+    task: str,
+    learning_rate: float,
+    max_seq_length: int,
+    per_device_train_batch_size: int,
+    adam_epsilon: float,
+    num_train_epochs: int,
+    prefix: Optional[str] = "final_",
+    do_train: Optional[bool] = True,
+    pre_trained_model=None,
+):
+    """from typing import Optional, Dict
+    Used for final training after random grid search identifies
+    optimal hyperparameters, stores results in a CSV
+    :param task: name of a supported GLUE task
+    :param learning_rate: learning rate
+    :param max_seq_length: max sequence length to send into the LM
+    :param per_device_train_batch_size: batch size
+    :param adam_epsilon: eps for the ADAM optimizer
+    :param num_train_epochs: number training epochs
+    :param prefix: additional prefix to add to the CSV output
+    :param do_train: whether to train an adapter, false for eval only
+    """
+    home = str(Path.home())
+    model_dir = f"{home}/git/roberta-base"
+
+    copy_adapter_config(task_name=task, model_dir=model_dir)
+
+    final_params = {
+        "task_name": [task],
+        "model_name_or_path": [model_dir],
+        "max_seq_length": [max_seq_length],
+        "pad_to_max_length": [True],
+        "per_device_train_batch_size": [per_device_train_batch_size],
+        "adam_beta1": [0.9],
+        "adam_beta2": [0.999],
+        "adam_epsilon": [adam_epsilon],
+        "fp16": [True],
+        "learning_rate": [learning_rate],
+        "warmup_ratio": [0.0],
+        "warmup_steps": [0],
+        "weight_decay": [0.0],
+        "do_train": [do_train],
+        "do_eval": [True],
+        "num_train_epochs": [num_train_epochs],
+        "overwrite_output_dir": [True],
+        "adapter_config": [f"pfeiffer"],
+    }
+
+    p = getParams(final_params, 1)
+    result = train(
+        params=p[0], output_prefix=prefix, pre_trained_model=pre_trained_model
+    )
+    result.to_csv(f"./adapter/task/{prefix}{task}_hp_search.{time():.0f}.csv")
 
 
 if __name__ == "__main__":
@@ -468,6 +575,6 @@ if __name__ == "__main__":
         adapter_config="pfeiffer",
     )
 
-    train_stats, eval_stats = train_task_adapter(
+    train_set_stats, eval_set_stats = train_task_adapter(
         model_args=model, adapter_args=adapter, training_args=training, data_args=data
     )
