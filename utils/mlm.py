@@ -495,10 +495,13 @@ def masked_language_modeling(
 
 
 if __name__ == "__main__":
+    """
+    Sample run that trains a language adapter for a single GLUE task
+    """
     dataset = "mrpc"
 
     model = DomainModelArguments(
-        model_name_or_path="/home/jason/git/roberta-base",
+        model_name_or_path="roberta-base",
     )
 
     data = DomainDataTrainingArguments(

@@ -1,5 +1,30 @@
-# coding=utf-8
-# Copyright 2020 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2021 Jason Weddington - All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Note: This code is adapted from the the AdapterHub Masked Language Modeling (MLM) training script.
+# Most functionality is retained, but I've moved dataclass definitions to a separate file
+# The reason for these changes is that for our project, we're training several different adapters
+# and we'd like to drive the training process from a Jupyter Notebook, rather than from the command line.
+# More info on training adapters: https://docs.adapterhub.ml/training.html
+
+# THIS A DERIVATIVE WORK AS DEFINED IN SECTION 4 OF THE APACHE 2.0 LICENSE, ORIGINAL LICENSE FOLLOWS
+# Original Work:
+# https://github.com/Adapter-Hub/adapter-transformers/blob/master/examples/text-classification/run_glue_alt.py
+
+# Original License:
+
+# Copyright 2020 The HuggingFace Team All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,21 +38,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Finetuning the library models for sequence classification on GLUE.
-This script is almost exactly identical to run_glue.py.
-The only change is replacing AutoModelForSequenceClassification with AutoModelWithHeads class for better adapter support.
+Fine-tuning the library models for masked language modeling (BERT, ALBERT, RoBERTa...) on a text file or a dataset.
+
+Here is the full list of checkpoints on the hub that can be fine-tuned by this script:
+https://huggingface.co/models?filter=masked-lm
 """
-# You can also adapt this script on your own text classification task. Pointers for this are left as comments.
+# You can also adapt this script on your own masked language modeling task. Pointers for this are left as comments.
 
 import logging
 import os
+from pathlib import Path
 import random
-import sys
-from dataclasses import dataclass, field
+from time import time
 from typing import Optional
 
-import numpy as np
+import pandas as pd
+
+from utils.task_utils import (
+    TaskModelArguments,
+    TaskDataTrainingArguments,
+    task_to_keys,
+    initParse,
+    getParams,
+    copy_adapter_config,
+)
+
 from datasets import load_dataset, load_metric
+from typing import Tuple, Dict
+import numpy as np
 
 import transformers
 from transformers import (
@@ -36,7 +74,6 @@ from transformers import (
     AutoModelWithHeads,
     AutoTokenizer,
     EvalPrediction,
-    HfArgumentParser,
     MultiLingAdapterArguments,
     PretrainedConfig,
     Trainer,
@@ -46,130 +83,25 @@ from transformers import (
 )
 from transformers.trainer_utils import is_main_process
 
-
-task_to_keys = {
-    "cola": ("sentence", None),
-    "mnli": ("premise", "hypothesis"),
-    "mrpc": ("sentence1", "sentence2"),
-    "qnli": ("question", "sentence"),
-    "qqp": ("question1", "question2"),
-    "rte": ("sentence1", "sentence2"),
-    "sst2": ("sentence", None),
-    "stsb": ("sentence1", "sentence2"),
-    "wnli": ("sentence1", "sentence2"),
-}
-
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class DataTrainingArguments:
-    """
-    Arguments pertaining to what data we are going to input our model for training and eval.
-
-    Using `HfArgumentParser` we can turn this class
-    into argparse arguments to be able to specify them on
-    the command line.
-    """
-
-    task_name: Optional[str] = field(
-        default=None,
-        metadata={"help": "The name of the task to train on: " + ", ".join(task_to_keys.keys())},
-    )
-    max_seq_length: int = field(
-        default=128,
-        metadata={
-            "help": "The maximum total input sequence length after tokenization. Sequences longer "
-            "than this will be truncated, sequences shorter will be padded."
-        },
-    )
-    overwrite_cache: bool = field(
-        default=False, metadata={"help": "Overwrite the cached preprocessed datasets or not."}
-    )
-    pad_to_max_length: bool = field(
-        default=True,
-        metadata={
-            "help": "Whether to pad all samples to `max_seq_length`. "
-            "If False, will pad the samples dynamically when batching to the maximum length in the batch."
-        },
-    )
-    train_file: Optional[str] = field(
-        default=None, metadata={"help": "A csv or a json file containing the training data."}
-    )
-    validation_file: Optional[str] = field(
-        default=None, metadata={"help": "A csv or a json file containing the validation data."}
-    )
-
-    def __post_init__(self):
-        if self.task_name is not None:
-            self.task_name = self.task_name.lower()
-            if self.task_name not in task_to_keys.keys():
-                raise ValueError("Unknown task, you should pick one in " + ",".join(task_to_keys.keys()))
-        elif self.train_file is None or self.validation_file is None:
-            raise ValueError("Need either a GLUE task or a training/validation file.")
-        else:
-            extension = self.train_file.split(".")[-1]
-            assert extension in ["csv", "json"], "`train_file` should be a csv or a json file."
-            extension = self.validation_file.split(".")[-1]
-            assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
-
-
-@dataclass
-class ModelArguments:
-    """
-    Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
-    """
-
-    model_name_or_path: str = field(
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
-    )
-    config_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
-    )
-    tokenizer_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
-    )
-    cache_dir: Optional[str] = field(
-        default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
-    )
-    use_fast_tokenizer: bool = field(
-        default=True,
-        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
-    )
-
-
-def main():
-    # See all possible arguments in src/transformers/training_args.py
-    # or by passing the --help flag to this script.
-    # We now keep distinct sets of args, for a cleaner separation of concerns.
-
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments, MultiLingAdapterArguments))
-
-    if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
-        # If we pass only one argument to the script and it's the path to a json file,
-        # let's parse it to get our arguments.
-        model_args, data_args, training_args, adapter_args = parser.parse_json_file(
-            json_file=os.path.abspath(sys.argv[1])
-        )
-    else:
-        model_args, data_args, training_args, adapter_args = parser.parse_args_into_dataclasses()
-
-    if (
-        os.path.exists(training_args.output_dir)
-        and os.listdir(training_args.output_dir)
-        and training_args.do_train
-        and not training_args.overwrite_output_dir
-    ):
-        raise ValueError(
-            f"Output directory ({training_args.output_dir}) already exists and is not empty. "
-            "Use --overwrite_output_dir to overcome."
-        )
+def train_task_adapter(
+    *,
+    model: Optional[AutoModelWithHeads] = None,
+    model_args: TaskModelArguments,
+    adapter_args: MultiLingAdapterArguments,
+    data_args: TaskDataTrainingArguments,
+    training_args: TrainingArguments,
+) -> Tuple[Dict, Dict]:
 
     # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO if is_main_process(training_args.local_rank) else logging.WARN,
+        level=logging.INFO
+        if is_main_process(training_args.local_rank)
+        else logging.WARN,
     )
 
     # Log on each process the small summary:
@@ -203,12 +135,20 @@ def main():
     elif data_args.train_file.endswith(".csv"):
         # Loading a dataset from local csv files
         datasets = load_dataset(
-            "csv", data_files={"train": data_args.train_file, "validation": data_args.validation_file}
+            "csv",
+            data_files={
+                "train": data_args.train_file,
+                "validation": data_args.validation_file,
+            },
         )
     else:
         # Loading a dataset from local json files
         datasets = load_dataset(
-            "json", data_files={"train": data_args.train_file, "validation": data_args.validation_file}
+            "json",
+            data_files={
+                "train": data_args.train_file,
+                "validation": data_args.validation_file,
+            },
         )
     # See more about loading any type of standard or custom dataset at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
@@ -224,7 +164,10 @@ def main():
             num_labels = 1
     else:
         # Trying to have good defaults here, don't hesitate to tweak to your needs.
-        is_regression = datasets["train"].features["label"].dtype in ["float32", "float64"]
+        is_regression = datasets["train"].features["label"].dtype in [
+            "float32",
+            "float64",
+        ]
         if is_regression:
             num_labels = 1
         else:
@@ -239,28 +182,34 @@ def main():
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
     config = AutoConfig.from_pretrained(
-        model_args.config_name if model_args.config_name else model_args.model_name_or_path,
+        model_args.config_name
+        if model_args.config_name
+        else model_args.model_name_or_path,
         num_labels=num_labels,
         finetuning_task=data_args.task_name,
         cache_dir=model_args.cache_dir,
     )
     tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
+        model_args.tokenizer_name
+        if model_args.tokenizer_name
+        else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
     )
     # We use the AutoModelWithHeads class here for better adapter support.
-    model = AutoModelWithHeads.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
-        cache_dir=model_args.cache_dir,
-    )
-    model.add_classification_head(
-        data_args.task_name or "glue",
-        num_labels=num_labels,
-        id2label={i: v for i, v in enumerate(label_list)} if num_labels > 0 else None,
-    )
+    # load a model if no model was passed into the function
+    if not model:
+        model = AutoModelWithHeads.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=config,
+            cache_dir=model_args.cache_dir,
+        )
+        model.add_classification_head(
+            data_args.task_name or "glue",
+            num_labels=num_labels,
+            id2label={i: v for i, v in enumerate(label_list)} if num_labels > 0 else None,
+        )
 
     # Setup adapters
     if adapter_args.train_adapter:
@@ -318,8 +267,13 @@ def main():
         sentence1_key, sentence2_key = task_to_keys[data_args.task_name]
     else:
         # Again, we try to have some nice defaults but don't hesitate to tweak to your use case.
-        non_label_column_names = [name for name in datasets["train"].column_names if name != "label"]
-        if "sentence1" in non_label_column_names and "sentence2" in non_label_column_names:
+        non_label_column_names = [
+            name for name in datasets["train"].column_names if name != "label"
+        ]
+        if (
+            "sentence1" in non_label_column_names
+            and "sentence2" in non_label_column_names
+        ):
             sentence1_key, sentence2_key = "sentence1", "sentence2"
         else:
             if len(non_label_column_names) >= 2:
@@ -346,7 +300,9 @@ def main():
         # Some have all caps in their config, some don't.
         label_name_to_id = {k.lower(): v for k, v in model.config.label2id.items()}
         if list(sorted(label_name_to_id.keys())) == list(sorted(label_list)):
-            label_to_id = {i: label_name_to_id[label_list[i]] for i in range(num_labels)}
+            label_to_id = {
+                i: label_name_to_id[label_list[i]] for i in range(num_labels)
+            }
         else:
             logger.warn(
                 "Your model seems to have been trained with labels, but they don't match the dataset: ",
@@ -359,21 +315,33 @@ def main():
     def preprocess_function(examples):
         # Tokenize the texts
         args = (
-            (examples[sentence1_key],) if sentence2_key is None else (examples[sentence1_key], examples[sentence2_key])
+            (examples[sentence1_key],)
+            if sentence2_key is None
+            else (examples[sentence1_key], examples[sentence2_key])
         )
-        result = tokenizer(*args, padding=padding, max_length=max_length, truncation=True)
+        result = tokenizer(
+            *args, padding=padding, max_length=max_length, truncation=True
+        )
 
         # Map labels to IDs (not necessary for GLUE tasks)
         if label_to_id is not None and "label" in examples:
             result["label"] = [label_to_id[l] for l in examples["label"]]
         return result
 
-    datasets = datasets.map(preprocess_function, batched=True, load_from_cache_file=not data_args.overwrite_cache)
+    datasets = datasets.map(
+        preprocess_function,
+        batched=True,
+        load_from_cache_file=not data_args.overwrite_cache,
+    )
 
     train_dataset = datasets["train"]
-    eval_dataset = datasets["validation_matched" if data_args.task_name == "mnli" else "validation"]
+    eval_dataset = datasets[
+        "validation_matched" if data_args.task_name == "mnli" else "validation"
+    ]
     if data_args.task_name is not None:
-        test_dataset = datasets["test_matched" if data_args.task_name == "mnli" else "test"]
+        test_dataset = datasets[
+            "test_matched" if data_args.task_name == "mnli" else "test"
+        ]
 
     # Log a few random samples from the training set:
     for index in random.sample(range(len(train_dataset)), 3):
@@ -415,9 +383,12 @@ def main():
     )
 
     # Training
+    training_stats = None
     if training_args.do_train:
-        trainer.train(
-            model_path=model_args.model_name_or_path if os.path.isdir(model_args.model_name_or_path) else None
+        training_stats = trainer.train(
+            model_path=model_args.model_name_or_path
+            if os.path.isdir(model_args.model_name_or_path)
+            else None
         )
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
@@ -436,7 +407,9 @@ def main():
         for eval_dataset, task in zip(eval_datasets, tasks):
             eval_result = trainer.evaluate(eval_dataset=eval_dataset)
 
-            output_eval_file = os.path.join(training_args.output_dir, f"eval_results_{task}.txt")
+            output_eval_file = os.path.join(
+                training_args.output_dir, f"eval_results_{task}.txt"
+            )
             if trainer.is_world_process_zero():
                 with open(output_eval_file, "w") as writer:
                     logger.info(f"***** Eval results {task} *****")
@@ -460,9 +433,15 @@ def main():
             # Removing the `label` columns because it contains -1 and Trainer won't like that.
             test_dataset.remove_columns_("label")
             predictions = trainer.predict(test_dataset=test_dataset).predictions
-            predictions = np.squeeze(predictions) if is_regression else np.argmax(predictions, axis=1)
+            predictions = (
+                np.squeeze(predictions)
+                if is_regression
+                else np.argmax(predictions, axis=1)
+            )
 
-            output_test_file = os.path.join(training_args.output_dir, f"test_results_{task}.txt")
+            output_test_file = os.path.join(
+                training_args.output_dir, f"test_results_{task}.txt"
+            )
             if trainer.is_world_process_zero():
                 with open(output_test_file, "w") as writer:
                     logger.info(f"***** Test results {task} *****")
@@ -473,13 +452,132 @@ def main():
                         else:
                             item = label_list[item]
                             writer.write(f"{index}\t{item}\n")
-    return eval_results
+
+    if training_stats:
+        return training_stats.metrics, eval_results
+
+    return None, eval_results
 
 
-def _mp_fn(index):
-    # For xla_spawn (TPUs)
-    main()
+def train(params: Dict, output_prefix="", pre_trained_model=None) -> pd.DataFrame:
+    model, data, training, adapter = initParse(params, output_prefix)
+
+    train_stats, eval_stats = train_task_adapter(
+        model=pre_trained_model,
+        model_args=model,
+        adapter_args=adapter,
+        training_args=training,
+        data_args=data,
+    )
+
+    row = []
+    row.extend(list(params.values()))
+    if train_stats:
+        row.extend(list(train_stats.values()))
+    row.extend(list(eval_stats.values()))
+
+    header = []
+    header.extend(list(params.keys()))
+    if train_stats:
+        header.extend(list(train_stats.keys()))
+    header.extend(list(eval_stats.keys()))
+
+    output_df = pd.DataFrame([row], columns=header)
+
+    del model
+    del data
+    del training
+    del adapter
+
+    return output_df
+
+
+def final_training(
+    task: str,
+    learning_rate: float,
+    max_seq_length: int,
+    per_device_train_batch_size: int,
+    adam_epsilon: float,
+    num_train_epochs: int,
+    prefix: Optional[str] = "final_",
+    do_train: Optional[bool] = True,
+    pre_trained_model=None,
+):
+    """from typing import Optional, Dict
+    Used for final training after random grid search identifies
+    optimal hyperparameters, stores results in a CSV
+    :param task: name of a supported GLUE task
+    :param learning_rate: learning rate
+    :param max_seq_length: max sequence length to send into the LM
+    :param per_device_train_batch_size: batch size
+    :param adam_epsilon: eps for the ADAM optimizer
+    :param num_train_epochs: number training epochs
+    :param prefix: additional prefix to add to the CSV output
+    :param do_train: whether to train an adapter, false for eval only
+    """
+    home = str(Path.home())
+    model_dir = f"{home}/git/roberta-base"
+
+    copy_adapter_config(task_name=task, model_dir=model_dir)
+
+    final_params = {
+        "task_name": [task],
+        "model_name_or_path": [model_dir],
+        "max_seq_length": [max_seq_length],
+        "pad_to_max_length": [True],
+        "per_device_train_batch_size": [per_device_train_batch_size],
+        "adam_beta1": [0.9],
+        "adam_beta2": [0.999],
+        "adam_epsilon": [adam_epsilon],
+        "fp16": [True],
+        "learning_rate": [learning_rate],
+        "warmup_ratio": [0.0],
+        "warmup_steps": [0],
+        "weight_decay": [0.0],
+        "do_train": [do_train],
+        "do_eval": [True],
+        "num_train_epochs": [num_train_epochs],
+        "overwrite_output_dir": [True],
+        "adapter_config": [f"pfeiffer"],
+    }
+
+    p = getParams(final_params, 1)
+    result = train(
+        params=p[0], output_prefix=prefix, pre_trained_model=pre_trained_model
+    )
+    result.to_csv(f"./adapter/task/{prefix}{task}_hp_search.{time():.0f}.csv")
 
 
 if __name__ == "__main__":
-    main()
+    """
+    Sample run that trains a task adapter for a single GLUE task
+    """
+    task = "cola"
+
+    model = TaskModelArguments(
+        model_name_or_path="roberta-base",
+    )
+
+    data = TaskDataTrainingArguments(
+        task_name=task,
+        max_seq_length=128,
+        pad_to_max_length=True,
+    )
+
+    training = TrainingArguments(
+        do_train=True,
+        do_eval=True,
+        learning_rate=1e-4,
+        num_train_epochs=1,
+        overwrite_output_dir=True,
+        output_dir=f"./adapter/test-task/{task}",
+    )
+
+    adapter = MultiLingAdapterArguments(
+        train_adapter=True,
+        adapter_config="pfeiffer",
+    )
+
+    train_set_stats, eval_set_stats = train_task_adapter(
+        model_args=model, adapter_args=adapter, training_args=training, data_args=data
+    )

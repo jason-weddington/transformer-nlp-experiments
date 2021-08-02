@@ -1,5 +1,0 @@
-Notes on using adapters with MLM (masked language modeling)
-
-Hugging Face reference
-- https://huggingface.co/roberta-base
-- 
