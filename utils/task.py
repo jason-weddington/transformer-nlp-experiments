@@ -86,6 +86,75 @@ from transformers.trainer_utils import is_main_process
 logger = logging.getLogger(__name__)
 
 
+def final_training(
+    task: str,
+    learning_rate: float = 1e-4,
+    max_seq_length: int = 64,
+    per_device_train_batch_size: int = 32,
+    adam_epsilon: float = 1e-6,
+    num_train_epochs: int = 1,
+    prefix: Optional[str] = "final_",
+    model_name: str = "roberta-base",
+    do_train: Optional[bool] = True,
+    local_weights: bool = False,
+    pre_trained_model=None,
+):
+    """from typing import Optional, Dict
+    Used for final training after random grid search identifies
+    optimal hyperparameters, stores results in a CSV
+    :param model_name:
+    :param task: name of a supported GLUE task
+    :param learning_rate: learning rate
+    :param max_seq_length: max sequence length to send into the LM
+    :param per_device_train_batch_size: batch size
+    :param adam_epsilon: eps for the ADAM optimizer
+    :param num_train_epochs: number training epochs
+    :param prefix: additional prefix to add to the CSV output
+    :param do_train: whether to train an adapter, false for eval only
+    :param local_weights: whether to load pre-trained weights from the local file system
+    :param pre_trained_model:
+    """
+    home = str(Path.home())
+
+    # hacky workaround for using pretrained model weights that
+    # have been cloned locally. This also requires that two
+    # adapater-specific files are available. In general
+    # this code path should be avoided and pre-trained model
+    # weights should be loaded from Huggingface.co
+    if local_weights:
+        model_name_or_path = f"{home}/git/{model_name}"
+        copy_adapter_config(task_name=task, model_dir=model_name_or_path)
+    else:
+        model_name_or_path = model_name
+
+    final_params = {
+        "task_name": [task],
+        "model_name_or_path": [model_name_or_path],
+        "max_seq_length": [max_seq_length],
+        "pad_to_max_length": [True],
+        "per_device_train_batch_size": [per_device_train_batch_size],
+        "adam_beta1": [0.9],
+        "adam_beta2": [0.999],
+        "adam_epsilon": [adam_epsilon],
+        "fp16": [True],
+        "learning_rate": [learning_rate],
+        "warmup_ratio": [0.0],
+        "warmup_steps": [0],
+        "weight_decay": [0.0],
+        "do_train": [do_train],
+        "do_eval": [True],
+        "num_train_epochs": [num_train_epochs],
+        "overwrite_output_dir": [True],
+        "adapter_config": [f"pfeiffer"],
+    }
+
+    p = getParams(final_params, 1)
+    result = train(
+        params=p[0], output_prefix=prefix, pre_trained_model=pre_trained_model
+    )
+    result.to_csv(f"./adapter/task/{prefix}{task}_hp_search.{time():.0f}.csv")
+
+
 def train_task_adapter(
     *,
     model: Optional[AutoModelWithHeads] = None,
@@ -208,7 +277,9 @@ def train_task_adapter(
         model.add_classification_head(
             data_args.task_name or "glue",
             num_labels=num_labels,
-            id2label={i: v for i, v in enumerate(label_list)} if num_labels > 0 else None,
+            id2label={i: v for i, v in enumerate(label_list)}
+            if num_labels > 0
+            else None,
         )
 
     # Setup adapters
@@ -490,62 +561,6 @@ def train(params: Dict, output_prefix="", pre_trained_model=None) -> pd.DataFram
     del adapter
 
     return output_df
-
-
-def final_training(
-    task: str,
-    learning_rate: float,
-    max_seq_length: int,
-    per_device_train_batch_size: int,
-    adam_epsilon: float,
-    num_train_epochs: int,
-    prefix: Optional[str] = "final_",
-    do_train: Optional[bool] = True,
-    pre_trained_model=None,
-):
-    """from typing import Optional, Dict
-    Used for final training after random grid search identifies
-    optimal hyperparameters, stores results in a CSV
-    :param task: name of a supported GLUE task
-    :param learning_rate: learning rate
-    :param max_seq_length: max sequence length to send into the LM
-    :param per_device_train_batch_size: batch size
-    :param adam_epsilon: eps for the ADAM optimizer
-    :param num_train_epochs: number training epochs
-    :param prefix: additional prefix to add to the CSV output
-    :param do_train: whether to train an adapter, false for eval only
-    """
-    home = str(Path.home())
-    model_dir = f"{home}/git/roberta-base"
-
-    copy_adapter_config(task_name=task, model_dir=model_dir)
-
-    final_params = {
-        "task_name": [task],
-        "model_name_or_path": [model_dir],
-        "max_seq_length": [max_seq_length],
-        "pad_to_max_length": [True],
-        "per_device_train_batch_size": [per_device_train_batch_size],
-        "adam_beta1": [0.9],
-        "adam_beta2": [0.999],
-        "adam_epsilon": [adam_epsilon],
-        "fp16": [True],
-        "learning_rate": [learning_rate],
-        "warmup_ratio": [0.0],
-        "warmup_steps": [0],
-        "weight_decay": [0.0],
-        "do_train": [do_train],
-        "do_eval": [True],
-        "num_train_epochs": [num_train_epochs],
-        "overwrite_output_dir": [True],
-        "adapter_config": [f"pfeiffer"],
-    }
-
-    p = getParams(final_params, 1)
-    result = train(
-        params=p[0], output_prefix=prefix, pre_trained_model=pre_trained_model
-    )
-    result.to_csv(f"./adapter/task/{prefix}{task}_hp_search.{time():.0f}.csv")
 
 
 if __name__ == "__main__":

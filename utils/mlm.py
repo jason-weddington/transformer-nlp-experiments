@@ -69,7 +69,7 @@ from transformers.adapters.configuration import AdapterConfig
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
-from mlm_utils import DomainModelArguments, DomainDataTrainingArguments
+from utils.mlm_utils import DomainModelArguments, DomainDataTrainingArguments
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.8.0")
